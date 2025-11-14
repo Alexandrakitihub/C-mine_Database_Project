@@ -1,0 +1,460 @@
+--Câți angajați s-au angajat după vârsta de 30 de ani?
+
+SELECT COUNT(*) AS nr_angajati_peste_30
+FROM angajati
+WHERE DATE_PART('year', age(data_angajarii, data_nasterii)) > 30;
+
+--Tidyverse
+rezultat <- angajati %>%
+  mutate(varsta_la_angajare = year(data_angajarii) - year(data_nasterii)) %>%
+  filter(varsta_la_angajare > 30) %>%
+  summarise(nr_angajati_peste_30 = n())
+
+
+
+--Afișați pentru fiecare cămin, numărul de gardieni care au fost de serviciu în anul universitar 2023-2024
+
+SELECT 
+    cs.denumire_camin,
+    COUNT(DISTINCT tg.id_gardian) AS numar_gardieni
+FROM 
+    public.camine_studenti cs
+LEFT JOIN (
+    SELECT *
+    FROM public.ture_gardieni
+    WHERE data_ora_inceput_tura >= '2023-10-01'
+      AND data_ora_inceput_tura < '2024-10-01'
+) tg
+ON cs.id_camin = tg.id_camin
+GROUP BY cs.denumire_camin
+ORDER BY cs.denumire_camin;
+
+--Tidyverse
+ture_filtrate <- ture_gardieni %>%
+  filter(data_ora_inceput_tura >= ymd("2023-10-01"),
+         data_ora_inceput_tura < ymd("2024-10-01"))
+
+rezultat <- camine_studenti %>%
+  left_join(ture_filtrate, by = "id_camin") %>%
+  group_by(denumire_camin) %>%
+  summarise(numar_gardieni = n_distinct(id_gardian, na.rm = TRUE)) %>%
+  arrange(denumire_camin)
+
+  
+
+--Pentru fiecare student, afișați pe coloane separate încasările pe anii universitari 2021, 2022, 2023
+
+SELECT 
+    s.matricol,
+    s.nume,
+    s.prenume,
+    COALESCE(SUM(CASE 
+        WHEN i.data_ora_incasare >= '2021-10-01' AND i.data_ora_incasare < '2022-10-01' THEN i.suma_incasata 
+        END), 0) AS incasari_2021,
+    COALESCE(SUM(CASE 
+        WHEN i.data_ora_incasare >= '2022-10-01' AND i.data_ora_incasare < '2023-10-01' THEN i.suma_incasata 
+        END), 0) AS incasari_2022,
+    COALESCE(SUM(CASE 
+        WHEN i.data_ora_incasare >= '2023-10-01' AND i.data_ora_incasare < '2024-10-01' THEN i.suma_incasata 
+        END), 0) AS incasari_2023
+FROM 
+    public.studenti s
+LEFT JOIN 
+    public.incasari i ON s.matricol = i.matricol_student_platitor
+GROUP BY 
+    s.matricol, s.nume, s.prenume
+ORDER BY 
+    s.matricol;
+
+--Tidyverse
+rezultat <- studenti %>%
+  left_join(incasari, by = c("matricol" = "matricol_student_platitor")) %>%
+  group_by(matricol, nume, prenume) %>%
+  summarise(
+    incasari_2021 = sum(if_else(
+      data_ora_incasare >= ymd("2021-10-01") & data_ora_incasare < ymd("2022-10-01"),
+      suma_incasata, 0), na.rm = TRUE),
+    
+    incasari_2022 = sum(if_else(
+      data_ora_incasare >= ymd("2022-10-01") & data_ora_incasare < ymd("2023-10-01"),
+      suma_incasata, 0), na.rm = TRUE),
+    
+    incasari_2023 = sum(if_else(
+      data_ora_incasare >= ymd("2023-10-01") & data_ora_incasare < ymd("2024-10-01"),
+      suma_incasata, 0), na.rm = TRUE)
+  ) %>%
+  arrange(matricol)
+
+  
+
+--Care este cel mai mare număr de vizite pe care le-a avut vreun student în 2023?
+
+SELECT 
+    MAX(nr_vizite) AS max_vizite_2023
+FROM (
+    SELECT 
+        matricol_student_vizitat,
+        COUNT(*) AS nr_vizite
+    FROM 
+        public.vizite
+    WHERE 
+        data_ora_inceput_vizita >= '2023-01-01' 
+        AND data_ora_inceput_vizita < '2024-01-01'
+    GROUP BY 
+        matricol_student_vizitat
+) AS subquery;
+
+--Tidyverse
+rezultat <- vizite %>%
+  filter(data_ora_inceput_vizita >= ymd("2023-01-01"),
+         data_ora_inceput_vizita < ymd("2024-01-01")) %>%
+  group_by(matricol_student_vizitat) %>%
+  summarise(nr_vizite = n(), .groups = "drop") %>%
+  summarise(max_vizite_2023 = max(nr_vizite))
+
+  
+
+--Afisati încasările din 2023 pentru fiecare cameră cu un subtotal la nivel de cămin, și un total general
+
+SELECT 
+    COALESCE(cs.denumire_camin, 'Total general') AS camin,
+    CASE 
+        WHEN GROUPING(cs.denumire_camin) = 0 AND GROUPING(c.numar_camera) = 0 THEN c.numar_camera
+        WHEN GROUPING(cs.denumire_camin) = 0 AND GROUPING(c.numar_camera) = 1 THEN 'Subtotal cămin'
+        WHEN GROUPING(cs.denumire_camin) = 1 AND GROUPING(c.numar_camera) = 1 THEN 'Total general'
+    END AS camera,
+    SUM(i.suma_incasata) AS total_incasari_2023
+FROM 
+    public.incasari i
+JOIN 
+    public.studenti s ON s.matricol = i.matricol_student_platitor
+JOIN 
+    public.repartizari r ON r.id_cerere = (
+        SELECT c.id_cerere
+        FROM public.cereri c
+        WHERE c.matricol = s.matricol
+        ORDER BY c.data_ora_cerere DESC
+        LIMIT 1
+    )
+JOIN 
+    public.cazari cz ON cz.id_repartizare = r.id_repartizare
+JOIN 
+    public.camere c ON cz.id_camera = c.id_camera
+JOIN 
+    public.camine_studenti cs ON c.id_camin = cs.id_camin
+WHERE 
+    i.data_ora_incasare >= '2023-01-01' 
+    AND i.data_ora_incasare < '2024-01-01'
+GROUP BY 
+    GROUPING SETS (
+        (cs.denumire_camin, c.numar_camera),
+        (cs.denumire_camin),
+        ()
+    )
+ORDER BY 
+    GROUPING(cs.denumire_camin),
+    cs.denumire_camin,
+    GROUPING(c.numar_camera),
+    c.numar_camera;
+
+--Tidyverse
+ultimele_cereri <- cereri %>%
+  group_by(matricol) %>%
+  filter(data_ora_cerere == max(data_ora_cerere)) %>%
+  select(matricol, id_cerere)
+incasari_join <- incasari %>%
+  filter(data_ora_incasare >= as.Date("2023-01-01") & data_ora_incasare < as.Date("2024-01-01")) %>%
+  inner_join(studenti, by = c("matricol_student_platitor" = "matricol")) %>%
+  inner_join(ultimele_cereri, by = c("matricol_student_platitor" = "matricol")) %>%
+  inner_join(repartizari, by = "id_cerere") %>%
+  inner_join(cazari, by = "id_repartizare") %>%
+  inner_join(camere, by = "id_camera") %>%
+  inner_join(camine_studenti, by = "id_camin")
+grup1 <- incasari_join %>%
+  group_by(denumire_camin, numar_camera) %>%
+  summarise(total_incasari_2023 = sum(suma_incasata), .groups = "drop") %>%
+  mutate(camera = numar_camera)
+grup2 <- incasari_join %>%
+  group_by(denumire_camin) %>%
+  summarise(total_incasari_2023 = sum(suma_incasata), .groups = "drop") %>%
+  mutate(camera = "Subtotal cămin")
+grup3 <- incasari_join %>%
+  summarise(total_incasari_2023 = sum(suma_incasata)) %>%
+  mutate(denumire_camin = "Total general", camera = "Total general")
+rezultat <- bind_rows(grup1, grup2, grup3) %>%
+  rename(camin = denumire_camin) %>%
+  select(camin, camera, total_incasari_2023) %>%
+  mutate(
+    ord_camin = if_else(camin == "Total general", 2, 0),
+    ord_camera = case_when(
+      camera == "Subtotal cămin" ~ 1,
+      camera == "Total general" ~ 2,
+      TRUE ~ 0
+    )
+  ) %>%
+  arrange(ord_camin, camin, ord_camera, camera) %>%
+  select(-ord_camin, -ord_camera)
+
+
+
+--Care dintre studentii care au primit repartizare nu au fost cazati(soluția nu va folosi operatorii: MINUS/EXCEPT/setdiff)
+
+SELECT s.matricol, s.nume, s.prenume
+FROM repartizari r
+JOIN cereri c ON r.id_cerere = c.id_cerere
+JOIN studenti s ON c.matricol = s.matricol
+LEFT JOIN cazari cz ON cz.id_repartizare = r.id_repartizare
+WHERE cz.id_cazare IS NULL;
+
+--Tidyverse
+rezultat <- repartizari %>%
+  inner_join(cereri, by = "id_cerere") %>%
+  inner_join(studenti, by = "matricol") %>%
+  left_join(cazari, by = "id_repartizare") %>%
+  filter(is.na(id_cazare)) %>%
+  select(matricol, nume, prenume)
+
+
+
+--Afișați primele încasări din anul 2023 pentru fiecare student din localitatea Pașcani
+
+SELECT *
+FROM (
+    SELECT 
+        s.matricol,
+        s.nume,
+        s.prenume,
+        i.data_ora_incasare,
+        i.suma_incasata,
+        ROW_NUMBER() OVER (PARTITION BY s.matricol ORDER BY i.data_ora_incasare ASC) AS rn
+    FROM studenti s
+    JOIN localitati l ON s.id_localitate = l.id_localitate
+    JOIN incasari i ON s.matricol = i.matricol_student_platitor
+    WHERE l.nume_localitate = 'Pașcani'
+      AND EXTRACT(YEAR FROM i.data_ora_incasare) = 2023
+) sub
+WHERE rn = 1;
+
+--Tidyverse
+rezultat <- studenti %>%
+  inner_join(localitati, by = "id_localitate") %>%
+  filter(nume_localitate == "Pașcani") %>%
+  inner_join(incasari, by = c("matricol" = "matricol_student_platitor")) %>%
+  filter(year(data_ora_incasare) == 2023) %>%
+  arrange(matricol, data_ora_incasare) %>%
+  group_by(matricol) %>%
+  mutate(rn = row_number()) %>%
+  filter(rn == 1) %>%
+  ungroup() %>%
+  select(matricol, nume, prenume, data_ora_incasare, suma_incasata)
+
+  
+
+--Care sunt căminele cu mai mulți studenți cazați în anul 2023 decât căminul Universitas?
+
+WITH nr_studenti_pe_camin AS (
+    SELECT 
+        cs.denumire_camin,
+        COUNT(DISTINCT ce.matricol) AS nr_studenti
+    FROM cazari cz
+    JOIN repartizari r ON cz.id_repartizare = r.id_repartizare
+    JOIN cereri ce ON r.id_cerere = ce.id_cerere
+    JOIN camine_studenti cs ON r.id_camin_repartizat = cs.id_camin
+    WHERE EXTRACT(YEAR FROM cz.data_ora_cazare) = 2023
+    GROUP BY cs.denumire_camin
+),
+centrul_universitar AS (
+    SELECT nr_studenti
+    FROM nr_studenti_pe_camin
+    WHERE denumire_camin = 'Universitas'
+)
+SELECT 
+    nr_studenti_pe_camin.denumire_camin, 
+    nr_studenti_pe_camin.nr_studenti
+FROM 
+    nr_studenti_pe_camin, 
+    centrul_universitar
+WHERE 
+    nr_studenti_pe_camin.nr_studenti > centrul_universitar.nr_studenti;
+
+--Tidyverse
+nr_studenti_pe_camin <- cazari %>%
+  filter(year(data_ora_cazare) == 2023) %>%
+  inner_join(repartizari, by = "id_repartizare") %>%
+  inner_join(cereri, by = "id_cerere") %>%
+  inner_join(camine_studenti, by = c("id_camin_repartizat" = "id_camin")) %>%
+  group_by(denumire_camin) %>%
+  summarise(nr_studenti = n_distinct(matricol), .groups = "drop")
+
+universitas <- nr_studenti_pe_camin %>%
+  filter(denumire_camin == "Universitas") %>%
+  pull(nr_studenti)
+
+if (length(universitas) == 0 || nrow(nr_studenti_pe_camin) == 0) {
+  message("Nu există date despre studenți cazați în 2023 sau despre căminul 'Universitas'.")
+  rezultat <- tibble(denumire_camin = character(), nr_studenti = integer())
+} else {
+  rezultat <- nr_studenti_pe_camin %>%
+    filter(denumire_camin != "Universitas", nr_studenti > universitas)
+  
+  if (nrow(rezultat) == 0) {
+    message("️ Niciun alt cămin nu are mai mulți studenți cazați decât 'Universitas'.")
+  } else {
+    print(rezultat)
+  }
+}
+
+--Care sunt caminele care au avut cel putin toti gardienii caminului Centrul Universitar?
+
+WITH gardieni_centrul_universitar AS (
+    SELECT id_gardian
+    FROM ture_gardieni
+    WHERE id_camin = (
+        SELECT id_camin
+        FROM camine_studenti
+        WHERE denumire_camin = 'Centrul Universitar'
+    )
+)
+SELECT cs.denumire_camin
+FROM camine_studenti cs
+JOIN ture_gardieni tg ON cs.id_camin = tg.id_camin
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM gardieni_centrul_universitar gcu
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM ture_gardieni tg2
+        WHERE tg2.id_camin = cs.id_camin
+        AND tg2.id_gardian = gcu.id_gardian
+    )
+)
+AND cs.denumire_camin != 'Centrul Universitar'
+GROUP BY cs.denumire_camin;
+
+--Tidyverse
+gardieni_cu <- ture_gardieni %>%
+  inner_join(camine_studenti, by = c("id_camin" = "id_camin")) %>%
+  filter(denumire_camin == "Centrul Universitar") %>%
+  distinct(id_gardian)
+gardieni_in_toate_caminele <- camine_studenti %>%
+  filter(denumire_camin != "Centrul Universitar") %>%
+  inner_join(ture_gardieni, by = "id_camin") %>%
+  semi_join(gardieni_cu, by = "id_gardian") %>%
+  distinct(denumire_camin, id_gardian)
+nr_gardieni_pe_camin <- gardieni_in_toate_caminele %>%
+  group_by(denumire_camin) %>%
+  summarise(nr_gardieni_comuni = n_distinct(id_gardian), .groups = "drop")
+rezultat <- nr_gardieni_pe_camin %>%
+  filter(nr_gardieni_comuni == nrow(gardieni_cu)) %>%
+  select(denumire_camin)
+
+
+  
+--Calculati ponderea fiecărui gardian în totalul de ture ale anului 2023 pentru căminul Centrul Universitar
+
+WITH ture_2023 AS (
+    SELECT id_gardian, COUNT(*) AS ture_gardian
+    FROM ture_gardieni
+    WHERE id_camin = (
+        SELECT id_camin
+        FROM camine_studenti
+        WHERE denumire_camin = 'Centrul Universitar'
+    )
+    AND EXTRACT(YEAR FROM data_ora_inceput_tura) = 2023
+    GROUP BY id_gardian
+),
+total_ture_2023 AS (
+    SELECT COUNT(*) AS total_ture
+    FROM ture_gardieni
+    WHERE id_camin = (
+        SELECT id_camin
+        FROM camine_studenti
+        WHERE denumire_camin = 'Centrul Universitar'
+    )
+    AND EXTRACT(YEAR FROM data_ora_inceput_tura) = 2023
+)
+SELECT tg.id_gardian, tg.ture_gardian, tt.total_ture,
+       ROUND(tg.ture_gardian * 100.0 / tt.total_ture, 2) AS pondere_procent
+FROM ture_2023 tg, total_ture_2023 tt
+ORDER BY pondere_procent DESC;
+
+--Tidyverse
+ture_2023 <- ture_gardieni %>%
+  inner_join(camine_studenti, by = "id_camin") %>%
+  filter(denumire_camin == "Centrul Universitar", 
+         format(as.Date(data_ora_inceput_tura), "%Y") == "2023") %>%
+  group_by(id_gardian) %>%
+  summarise(ture_gardian = n())
+
+total_ture_2023 <- ture_gardieni %>%
+  inner_join(camine_studenti, by = "id_camin") %>%
+  filter(denumire_camin == "Centrul Universitar", 
+         format(as.Date(data_ora_inceput_tura), "%Y") == "2023") %>%
+  summarise(total_ture = n())
+
+rezultat <- ture_2023 %>%
+  cross_join(total_ture_2023) %>%  # Folosim cross_join() pentru a îmbina tabelele
+  mutate(pondera_procent = round(ture_gardian * 100 / total_ture, 2)) %>%
+  arrange(desc(pondera_procent))
+
+
+
+--Calculați pozițiile fiecărei camere din căminul Studentilor în topul camerelor după numărul de studenți cazați în anul 2023, atât în cadrul căminului Studentilor cât și comparativ cu celelalte cămine studentesti
+
+WITH nr_studenti_pe_camera AS (
+    SELECT
+        ca.id_camera,
+      ca.numar_camera,
+        ca.id_camin,
+        COUNT(DISTINCT cz.id_cazare) AS nr_studenti
+    FROM cazari cz
+    JOIN camere ca ON cz.id_camera = ca.id_camera
+    WHERE EXTRACT(YEAR FROM cz.data_ora_cazare) = 2023
+    GROUP BY ca.id_camera, ca.numar_camera, ca.id_camin
+),
+rank_total AS (
+    SELECT
+        c.id_camera,
+        c.numar_camera,
+        cs.denumire_camin,
+        c.id_camin,
+        ns.nr_studenti,
+        RANK() OVER (ORDER BY ns.nr_studenti DESC) AS pozitie
+    FROM nr_studenti_pe_camera ns
+    JOIN camere c ON ns.id_camera = c.id_camera
+    JOIN camine_studenti cs ON c.id_camin = cs.id_camin
+),
+rank_cu_local AS (
+    SELECT *,
+           RANK() OVER (PARTITION BY id_camin ORDER BY nr_studenti DESC) AS pozitie_in_camin
+    FROM rank_total
+)
+SELECT numar_camera, nr_studenti, pozitie_in_camin, pozitie
+FROM rank_cu_local
+WHERE denumire_camin = 'Studentilor'
+ORDER BY pozitie_in_camin;
+
+--Tidyverse
+nr_studenti_pe_camera <- cazari %>%
+  inner_join(camere, by = "id_camera") %>%
+  filter(format(as.Date(data_ora_cazare), "%Y") == "2023") %>%
+  group_by(id_camera, numar_camera, id_camin) %>%
+  summarise(nr_studenti = n_distinct(id_cazare))
+
+rank_total <- nr_studenti_pe_camera %>%
+  inner_join(camine_studenti, by = "id_camin") %>%
+  mutate(pozitie = dense_rank(desc(nr_studenti))) %>%
+  select(id_camera, numar_camera, denumire_camin, id_camin, nr_studenti, pozitie)
+
+rank_cu_local <- rank_total %>%
+  group_by(id_camin) %>%
+  mutate(pozitie_in_camin = dense_rank(desc(nr_studenti))) %>%
+  ungroup()
+
+rezultat <- rank_cu_local %>%
+  filter(denumire_camin == "Studentilor") %>%
+  select(numar_camera, nr_studenti, pozitie_in_camin, pozitie) %>%
+  arrange(pozitie_in_camin)
+
+
+
