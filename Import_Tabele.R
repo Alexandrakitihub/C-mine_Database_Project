@@ -1,0 +1,31 @@
+library(RPostgres)
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+
+con<-dbConnect(RPostgres::Postgres(),dbname="Tema 1", user="postgres", host='localhost', password="postgres")
+
+tables <- dbGetQuery(con, 
+                     "select table_name from information_schema.tables where table_schema = 'public'")
+tables
+
+angajati<-dbReadTable(con, "angajati")
+camere<-dbReadTable(con, "camere")
+camine_studenti<-dbReadTable(con, "camine_studenti")
+cazari<-dbReadTable(con, "cazari")
+cereri<-dbReadTable(con, "cereri")
+contracte_angajati<-dbReadTable(con, "contracte_angajati")
+email_angajati<-dbReadTable(con, "email_angajati")
+facultati<-dbReadTable(con, "facultati")
+incasari<-dbReadTable(con, "incasari")
+localitati<-dbReadTable(con, "localitati")
+locuri_camine_facultati<-dbReadTable(con, "locuri_camine_facultati")
+parcurs_studenti<-dbReadTable(con, "parcurs_studenti")
+repartizari<-dbReadTable(con, "repartizari")
+tari<-dbReadTable(con, "tari")
+tel_angajati<-dbReadTable(con, "tel_angajati")
+ture_gardieni<-dbReadTable(con, "ture_gardieni")
+ture_receptionisti<-dbReadTable(con, "ture_receptionisti")
+universitati<-dbReadTable(con, "universitati")
+vizite<-dbReadTable(con, "vizite")
+studenti<-dbReadTable(con, "studenti")
